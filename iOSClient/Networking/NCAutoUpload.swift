@@ -1,25 +1,6 @@
-//
-//  NCAutoUpload.swift
-//  Nextcloud
-//
-//  Created by Marino Faggiana on 27/01/21.
-//  Copyright © 2021 Marino Faggiana. All rights reserved.
-//
-//  Author Marino Faggiana <marino.faggiana@nextcloud.com>
-//
-//  This program is free software: you can redistribute it and/or modify
-//  it under the terms of the GNU General Public License as published by
-//  the Free Software Foundation, either version 3 of the License, or
-//  (at your option) any later version.
-//
-//  This program is distributed in the hope that it will be useful,
-//  but WITHOUT ANY WARRANTY; without even the implied warranty of
-//  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-//  GNU General Public License for more details.
-//
-//  You should have received a copy of the GNU General Public License
-//  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-//
+// SPDX-FileCopyrightText: Nextcloud GmbH
+// SPDX-FileCopyrightText: 2021 Marino Faggiana
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 import UIKit
 import CoreLocation
@@ -39,24 +20,22 @@ class NCAutoUpload: NSObject {
 
     func initAutoUpload(controller: NCMainTabBarController?, account: String, completion: @escaping (_ num: Int) -> Void) {
         applicationState = UIApplication.shared.applicationState
-        DispatchQueue.global().async {
-            guard NCNetworking.shared.isOnline,
-                  let tableAccount = self.database.getTableAccount(predicate: NSPredicate(format: "account == %@", account)),
-                  tableAccount.autoUploadStart else {
+        guard NCNetworking.shared.isOnline,
+              let tableAccount = self.database.getTableAccount(predicate: NSPredicate(format: "account == %@", account)),
+              tableAccount.autoUploadStart else {
+            return completion(0)
+        }
+
+        NCAskAuthorization().askAuthorizationPhotoLibrary(controller: controller) { [self] hasPermission in
+            guard hasPermission else {
+                self.database.setAccountAutoUploadProperty("autoUpload", state: false)
                 return completion(0)
             }
+            let albumIds = NCKeychain().getAutoUploadAlbumIds(account: account)
+            let selectedAlbums = PHAssetCollection.allAlbums.filter({albumIds.contains($0.localIdentifier)})
 
-            NCAskAuthorization().askAuthorizationPhotoLibrary(controller: controller) { [self] hasPermission in
-                guard hasPermission else {
-                    self.database.setAccountAutoUploadProperty("autoUpload", state: false)
-                    return completion(0)
-                }
-                let albumIds = NCKeychain().getAutoUploadAlbumIds(account: account)
-                let selectedAlbums = PHAssetCollection.allAlbums.filter({albumIds.contains($0.localIdentifier)})
-
-                self.uploadAssets(controller: controller, assetCollections: selectedAlbums, log: "Init Auto Upload", account: account) { num in
-                    completion(num)
-                }
+            self.uploadAssets(controller: controller, assetCollections: selectedAlbums, log: "Init Auto Upload", account: account) { num in
+                completion(num)
             }
         }
     }
@@ -75,10 +54,8 @@ class NCAutoUpload: NSObject {
 
         NCAskAuthorization().askAuthorizationPhotoLibrary(controller: controller) { hasPermission in
             guard hasPermission else { return }
-            DispatchQueue.global().async {
-                self.uploadAssets(controller: controller, assetCollections: assetCollections, log: log, account: account) { _ in
-                    self.hud.dismiss()
-                }
+            self.uploadAssets(controller: controller, assetCollections: assetCollections, log: log, account: account) { _ in
+                self.hud.dismiss()
             }
         }
     }
