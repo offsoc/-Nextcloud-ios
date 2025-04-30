@@ -39,24 +39,22 @@ class NCAutoUpload: NSObject {
 
     func initAutoUpload(controller: NCMainTabBarController?, account: String, completion: @escaping (_ num: Int) -> Void) {
         applicationState = UIApplication.shared.applicationState
-        DispatchQueue.global().async {
-            guard NCNetworking.shared.isOnline,
-                  let tableAccount = self.database.getTableAccount(predicate: NSPredicate(format: "account == %@", account)),
-                  tableAccount.autoUploadStart else {
+        guard NCNetworking.shared.isOnline,
+              let tableAccount = self.database.getTableAccount(predicate: NSPredicate(format: "account == %@", account)),
+              tableAccount.autoUploadStart else {
+            return completion(0)
+        }
+
+        NCAskAuthorization().askAuthorizationPhotoLibrary(controller: controller) { [self] hasPermission in
+            guard hasPermission else {
+                self.database.setAccountAutoUploadProperty("autoUpload", state: false)
                 return completion(0)
             }
+            let albumIds = NCKeychain().getAutoUploadAlbumIds(account: account)
+            let selectedAlbums = PHAssetCollection.allAlbums.filter({albumIds.contains($0.localIdentifier)})
 
-            NCAskAuthorization().askAuthorizationPhotoLibrary(controller: controller) { [self] hasPermission in
-                guard hasPermission else {
-                    self.database.setAccountAutoUploadProperty("autoUpload", state: false)
-                    return completion(0)
-                }
-                let albumIds = NCKeychain().getAutoUploadAlbumIds(account: account)
-                let selectedAlbums = PHAssetCollection.allAlbums.filter({albumIds.contains($0.localIdentifier)})
-
-                self.uploadAssets(controller: controller, assetCollections: selectedAlbums, log: "Init Auto Upload", account: account) { num in
-                    completion(num)
-                }
+            self.uploadAssets(controller: controller, assetCollections: selectedAlbums, log: "Init Auto Upload", account: account) { num in
+                completion(num)
             }
         }
     }
@@ -75,10 +73,8 @@ class NCAutoUpload: NSObject {
 
         NCAskAuthorization().askAuthorizationPhotoLibrary(controller: controller) { hasPermission in
             guard hasPermission else { return }
-            DispatchQueue.global().async {
-                self.uploadAssets(controller: controller, assetCollections: assetCollections, log: log, account: account) { _ in
-                    self.hud.dismiss()
-                }
+            self.uploadAssets(controller: controller, assetCollections: assetCollections, log: log, account: account) { _ in
+                self.hud.dismiss()
             }
         }
     }
