@@ -118,22 +118,37 @@ class FileProviderExtension: NSFileProviderExtension {
             metadata.fileNameView = "root"
             metadata.serverUrl = utilityFileSystem.getHomeServer(session: fileProviderData.shared.session)
             metadata.classFile = NKCommon.TypeClassFile.directory.rawValue
+
             return FileProviderItem(metadata: metadata, parentItemIdentifier: NSFileProviderItemIdentifier(NSFileProviderItemIdentifier.rootContainer.rawValue))
         } else {
             guard let metadata = providerUtility.getTableMetadataFromItemIdentifier(identifier),
                   let parentItemIdentifier = providerUtility.getParentItemIdentifier(metadata: metadata) else {
                 throw NSFileProviderError(.noSuchItem)
             }
+
             let item = FileProviderItem(metadata: metadata, parentItemIdentifier: parentItemIdentifier)
+
             return item
         }
     }
 
     override func urlForItem(withPersistentIdentifier identifier: NSFileProviderItemIdentifier) -> URL? {
-        guard let item = try? item(for: identifier) else { return nil }
-        var url = fileProviderData.shared.fileProviderManager.documentStorageURL.appendingPathComponent(identifier.rawValue, isDirectory: true)
-        // (fix copy/paste directory -> isDirectory = false)
-        url = url.appendingPathComponent(item.filename, isDirectory: false)
+        guard let item = try? item(for: identifier) else {
+            return nil
+        }
+
+        var url = fileProviderData
+            .shared
+            .fileProviderManager
+            .documentStorageURL
+            .appendingPathComponent(identifier.rawValue, isDirectory: true)
+
+        let isDirectory: Bool = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+
+        if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == false {
+            url = url.appendingPathComponent(item.filename, isDirectory: false)
+        }
+
         return url
     }
 
@@ -142,7 +157,16 @@ class FileProviderExtension: NSFileProviderExtension {
         // exploit the fact that the path structure has been defined as
         // <base storage directory>/<item identifier>/<item file name> above
         assert(pathComponents.count > 2)
-        let itemIdentifier = NSFileProviderItemIdentifier(pathComponents[pathComponents.count - 2])
+
+        let isDirectory: Bool = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        let itemIdentifier: NSFileProviderItemIdentifier
+
+        if isDirectory {
+            itemIdentifier = NSFileProviderItemIdentifier(pathComponents[pathComponents.count - 1])
+        } else {
+            itemIdentifier = NSFileProviderItemIdentifier(pathComponents[pathComponents.count - 2])
+        }
+
         return itemIdentifier
     }
 
@@ -150,10 +174,15 @@ class FileProviderExtension: NSFileProviderExtension {
         guard let identifier = persistentIdentifierForItem(at: url) else {
             return completionHandler(NSFileProviderError(.noSuchItem))
         }
+
         do {
             let fileProviderItem = try item(for: identifier)
-            let placeholderURL = NSFileProviderManager.placeholderURL(for: url)
-            try NSFileProviderManager.writePlaceholder(at: placeholderURL, withMetadata: fileProviderItem)
+
+            if fileProviderItem.typeIdentifier != UTType.folder.identifier {
+                let placeholderURL = NSFileProviderManager.placeholderURL(for: url)
+                try NSFileProviderManager.writePlaceholder(at: placeholderURL, withMetadata: fileProviderItem)
+            }
+
             completionHandler(nil)
         } catch {
             completionHandler(error)
@@ -162,19 +191,29 @@ class FileProviderExtension: NSFileProviderExtension {
 
     override func startProvidingItem(at url: URL, completionHandler: @escaping ((_ error: Error?) -> Void)) {
         let pathComponents = url.pathComponents
-        let itemIdentifier = NSFileProviderItemIdentifier(pathComponents[pathComponents.count - 2])
+        let isDirectory: Bool = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        let itemIdentifier = NSFileProviderItemIdentifier(isDirectory ? pathComponents[pathComponents.count - 1] : pathComponents[pathComponents.count - 2])
         var metadata: tableMetadata?
+
+        if itemIdentifier == NSFileProviderItemIdentifier.rootContainer {
+            completionHandler(nil)
+            return
+        }
+
         if let result = fileProviderData.shared.getUploadMetadata(id: itemIdentifier.rawValue) {
             metadata = result.metadata
         } else {
             metadata = self.database.getMetadataFromOcIdAndocIdTransfer(itemIdentifier.rawValue)
         }
+
         guard let metadata else {
             return completionHandler(NSFileProviderError(.noSuchItem))
         }
+
         if metadata.directory || metadata.session == NCNetworking.shared.sessionUploadBackgroundExt {
             return completionHandler(nil)
         }
+
         let serverUrlFileName = metadata.serverUrl + "/" + metadata.fileName
         let fileNameLocalPath = utilityFileSystem.getDirectoryProviderStorageOcId(metadata.ocId, fileNameView: metadata.fileName)
         // Exists ? return
@@ -273,7 +312,8 @@ class FileProviderExtension: NSFileProviderExtension {
     override func stopProvidingItem(at url: URL) {
         let pathComponents = url.pathComponents
         assert(pathComponents.count > 2)
-        let itemIdentifier = NSFileProviderItemIdentifier(pathComponents[pathComponents.count - 2])
+        let isDirectory: Bool = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        let itemIdentifier = NSFileProviderItemIdentifier(isDirectory ? pathComponents[pathComponents.count - 1] : pathComponents[pathComponents.count - 2])
         guard let metadata = self.database.getMetadataFromOcIdAndocIdTransfer(itemIdentifier.rawValue) else { return }
         if metadata.session == NCNetworking.shared.sessionDownload {
             let session = NextcloudKit.shared.nkCommonInstance.getSession(account: metadata.session)?.sessionData.session
